@@ -80,10 +80,8 @@
                 }
             }
             
-            // Global Questions store
             class Questions {
                 static add(question) {
-                    // Save the question and map its name to its index
                     this.Q[question.name] = this.Q.push(question) - 1;
                 }
                 static byName(name) {
@@ -95,11 +93,14 @@
             }
             Questions.Q = [];
             
-            // Define the question flow, using .when() instead of .if()
             new Question("start")
                 .ask("What's your name?")
-                .when("James Dracup").then("james")
-                .when("It's not James Dracup").then("doing");
+                
+                .when("James Dracup")
+                .then("james")
+                
+                .when("It's not James Dracup")
+                .then("doing");
             
             new Question("doing")
                 .ask("What are you doing?")
