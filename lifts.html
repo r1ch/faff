@@ -70,11 +70,6 @@
             /* Decorate the "cable car" circles */
             .chair-marker { fill: #6c757d; stroke: none; }
             .gondola-marker { fill: #6c757d; stroke: none; user-select: none; pointer-events: none; }
-            
-            .text {
-                stroke: none;
-                fill: none;
-            }
 
             .question-container {
                 background-color: rgba(255, 255, 255, 0.7);
@@ -109,6 +104,47 @@
             .history-item:hover {
                 background-color: rgba(255, 255, 255, 1);
                 transform: translateY(-2px);
+            }
+
+            /* Landscape Elements */
+            .landscape-rock-layer {
+                opacity: 0.9;
+                filter: blur(3px);
+            }
+            .landscape-snow-layer {
+                opacity: 1.0;
+            }
+            .landscape-contours path {
+                fill: none;
+                stroke: #023b46;
+                stroke-width: 0.8px;
+                stroke-opacity: 0.2;
+            }
+            .boulder {
+                opacity: 0.9;
+            }
+            .tree {
+                fill: #19692c;
+                opacity: 1.0;
+            }
+
+            /* SVG Layout */
+            svg.responsive-svg {
+                max-width: 100%;
+                height: auto;
+            }
+
+            /* Debug Labels */
+            .debug-label {
+                text-anchor: middle;
+                font-size: 10px;
+                pointer-events: none;
+            }
+            .debug-label-text {
+                text-anchor: middle;
+                font-size: 10px;
+                fill: #666;
+                pointer-events: none;
             }
             .history-label {
                 display: block;
