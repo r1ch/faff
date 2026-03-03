@@ -1,3 +1,16 @@
+// Seeded Random Number Generator
+class Mulberry32 {
+    constructor(seed) {
+        this.state = seed;
+    }
+    next() {
+        var t = this.state += 0x6D2B79F5;
+        t = Math.imul(t ^ t >>> 15, t | 1);
+        t ^= t + Math.imul(t ^ t >>> 7, t | 61);
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+}
+
 // Minimal Simplex Noise implementation
 class SimplexNoise {
     constructor(random) {
@@ -61,7 +74,8 @@ app.component('graph-background', {
     template: '<div id="background-graph"></div>',
     data() {
         return {
-            lastWidth: window.innerWidth
+            lastWidth: window.innerWidth,
+            seed: Date.now() // Seed once on creation
         }
     },
     mounted() {
@@ -99,7 +113,7 @@ app.component('graph-background', {
         },
         drawLandscape(svg, width, height, links, root) {
             const g = svg.append("g").attr("class", "landscape");
-            const noise = new SimplexNoise();
+            const noise = new SimplexNoise(() => this.rng.next());
             
             // Configuration for the terrain
             const renderSize = Math.max(width, height) * 4; // Significantly larger to handle panning
@@ -129,23 +143,21 @@ app.component('graph-background', {
             colCtx.lineJoin = 'round';
             colCtx.strokeStyle = '#000'; 
             
-            if (links) {
-                const linkGen = d3.linkRadial()
-                    .angle(d => d.x)
-                    .radius(d => d.y)
-                    .context(colCtx);
-                links.forEach(d => {
-                    // Set width based on type
-                    if (d.styleType === 'run') {
-                         colCtx.lineWidth = 120;
-                    } else {
-                         colCtx.lineWidth = 50; // Narrower "ski area" for lifts
-                    }
-                    colCtx.beginPath();
-                    linkGen(d);
-                    colCtx.stroke();
-                });
-            }
+            const linkGen = d3.linkRadial()
+                .angle(d => d.x)
+                .radius(d => d.y)
+                .context(colCtx);
+            links.forEach(d => {
+                // Set width based on type
+                if (d.styleType === 'run') {
+                        colCtx.lineWidth = 120;
+                } else {
+                        colCtx.lineWidth = 50; // Narrower "ski area" for lifts
+                }
+                colCtx.beginPath();
+                linkGen(d);
+                colCtx.stroke();
+            });
             
             // Get data for pixel checking
             // We need to transform back to pixel coordinates
@@ -170,10 +182,17 @@ app.component('graph-background', {
                 // SVG coordinates are centered at (0,0) due to viewBox
                 // But for IDW we need consistent coordinates
                 const angle = d.x - Math.PI / 2;
+                let z = d.elevation || 0;
+                
+                // Force James node to be a local minimum (lake)
+                if (d.data.name === 'james') {
+                    z -= 1.0;
+                }
+
                 return {
                     x: d.y * Math.cos(angle),
                     y: d.y * Math.sin(angle),
-                    z: d.elevation || 0
+                    z: z
                 };
             });
 
@@ -185,6 +204,9 @@ app.component('graph-background', {
             });
             // Expand range slightly to avoid edge cases
             const zRange = Math.max(0.1, maxZ - minZ);
+            
+            // Define lake level slightly above the minimum (James)
+            const lakeLevel = minZ + 1.2;
             
             // Function to calculate height at (x, y)
             const calculateHeight = (x, y) => {
@@ -325,20 +347,18 @@ app.component('graph-background', {
                         // ROCK
                         // High frequency noise for texture
                         let base = 240;
-                        const textureScale = 0.5;
+                        const textureScale = 100;
                         const textureVal = noise.noise2D(wx * textureScale, wy * textureScale);
                         
                         base = base - (1-quantized) * 40;
                         
                         let r, g, b;
 
-                        if (textureVal > 0.4) {
-                            r = 80; g = 70; b = 60;
-                        } else if (textureVal < -0.4) {
-                             r = 255; g = 255; b = 255;
-                        } else {
-                            r = base; g = base * 0.98; b = base * 0.95;
-                        }
+                        // Icy Blue / White aesthetic for rocks
+                        // Boost Blue and Green channels slightly relative to Red for a cool tone
+                        r = base * 0.94; 
+                        g = base * 0.98; 
+                        b = base;
                         
                         rockData.data[idx] = r;
                         rockData.data[idx+1] = g;
@@ -364,8 +384,7 @@ app.component('graph-background', {
                 .attr("y", -imageSize/2)
                 .attr("width", imageSize)
                 .attr("height", imageSize)
-                .attr("opacity", 0.9)
-                .style("filter", "blur(3px)");
+                .attr("class", "landscape-rock-layer");
                 
             // 2. Snow Layer (Sharp, to preserve shading detail)
             g.append("image")
@@ -374,114 +393,139 @@ app.component('graph-background', {
                 .attr("y", -imageSize/2)
                 .attr("width", imageSize)
                 .attr("height", imageSize)
-                .attr("opacity", 1.0);
-                
-            // Use d3.contours if available for nicer lines
-            if (d3.contours) {
-                const contours = d3.contours()
-                    .size([resolution, resolution])
-                    .thresholds(12) // 12 contour lines
-                    (values);
-                
-                // Project contours back to SVG coordinates
-                // d3.geoPath works with GeoJSON. We need a projection that scales 
-                // grid coordinates (0..resolution) to world coordinates.
-                const projection = d3.geoIdentity()
-                    .scale(cellSize)
-                    .translate([-imageSize/2, -imageSize/2]);
-                
-                const path = d3.geoPath(projection);
-                
-                g.append("g")
-                    .attr("class", "contours")
-                    .selectAll("path")
-                    .data(contours)
-                    .enter().append("path")
-                        .attr("d", path)
-                        .attr("fill", "none")
-                        .attr("stroke", "#023b46") // Darker stroke for contrast on snow
-                        .attr("stroke-width", .8)
-                        .attr("stroke-opacity", .2)
-            }
+                .attr("class", "landscape-snow-layer");
+            
+            // Generate lake contour
+            // To get the area *below* the threshold (the lake), we invert the heightmap
+            // because d3.contours returns the area *above* the threshold.
+            const invertedValues = new Float32Array(values.length);
+            for(let i=0; i<values.length; i++) invertedValues[i] = -values[i];
+            
+            const lakeContour = d3.contours()
+                .size([resolution, resolution])
+                .thresholds([-lakeLevel])
+                (invertedValues);
+
+            // Use d3.contours
+            const contours = d3.contours()
+                .size([resolution, resolution])
+                .thresholds(12) // 12 contour lines
+                (values);
+            
+            // Project contours back to SVG coordinates
+            // d3.geoPath works with GeoJSON. We need a projection that scales 
+            // grid coordinates (0..resolution) to world coordinates.
+            const projection = d3.geoIdentity()
+                .scale(cellSize)
+                .translate([-imageSize/2, -imageSize/2]);
+            
+            const path = d3.geoPath(projection);
+            
+            // Draw Lake
+            g.append("g")
+                .attr("class", "landscape-lake")
+                .selectAll("path")
+                .data(lakeContour)
+                .enter().append("path")
+                    .attr("d", path)
+                    .attr("fill", "rgba(65, 105, 225, 0.5)") // Royal Blue wash
+                    .attr("stroke", "none");
+
+            g.append("g")
+                .attr("class", "landscape-contours")
+                .selectAll("path")
+                .data(contours)
+                .enter().append("path")
+                    .attr("d", path);
 
             const maxR = 1.5*Math.min(width, height); // Area to scatter scattered objects
 
+            // Scatter Helper
+            const scatter = (container, count, seedOffset, checkFn, drawFn) => {
+                for(let k=0; k<count; k++) {
+                    const particleSeed = this.seed + seedOffset + k;
+                    const rng = new Mulberry32(particleSeed);
+
+                    const r = Math.sqrt(rng.next()) * maxR * 1.5;
+                    const theta = rng.next() * 2 * Math.PI;
+                    const x = r * Math.cos(theta);
+                    const y = r * Math.sin(theta);
+                    
+                    if (checkLinkCollision(x, y)) continue;
+                    if (checkFn && !checkFn(x, y)) continue;
+                    
+                    drawFn(container, x, y, rng);
+                }
+            };
+
             // --- Boulders ---
             const boulderGroup = svg.append("g").attr("class", "boulders");
-            const boulderSamples = 1000;
-            
-            for(let k=0; k<boulderSamples; k++) {
-                const r = Math.sqrt(Math.random()) * maxR * 1.5;
-                const theta = Math.random() * 2 * Math.PI;
-                const x = r * Math.cos(theta);
-                const y = r * Math.sin(theta);
-                
-                if (checkLinkCollision(x, y)) continue;
-
-                const numPoints = 3 + Math.floor(Math.random() * 4);
+            scatter(boulderGroup, 4000, 100000, (x, y) => {
+                const h = calculateHeight(x, y);
+                return h > lakeLevel + 0.2; // Keep out of lake
+            }, (container, x, y, rng) => {
+                const numPoints = 3 + Math.floor(rng.next() * 4);
                 let dPath = "";
                 for(let p=0; p<numPoints; p++) {
-                    const angle = (p / numPoints) * 2 * Math.PI + (Math.random() - 0.5);
-                    const rad = 2 + Math.random() * 3; 
+                    const angle = (p / numPoints) * 2 * Math.PI + (rng.next() - 0.5);
+                    const rad = 10 + rng.next() * 3; 
                     const px = Math.cos(angle) * rad;
                     const py = Math.sin(angle) * rad;
                     dPath += (p===0 ? "M" : "L") + px + "," + py;
                 }
                 dPath += "z";
                 
-                const shade = 60 + Math.random() * 80;
-                const isBrown = Math.random() > 0.5;
+                const shade = 60 + rng.next() * 80;
+                // Reduce brown boulders frequency (from 50% to ~20%)
+                const isBrown = rng.next() > 0.8;
                 const color = isBrown 
                     ? `rgb(${Math.floor(shade + 20)}, ${Math.floor(shade)}, ${Math.floor(shade - 20)})` 
                     : `rgb(${Math.floor(shade)}, ${Math.floor(shade)}, ${Math.floor(shade)})`;
                 
-                boulderGroup.append("path")
+                container.append("path")
                     .attr("d", dPath)
                     .attr("transform", `translate(${x},${y})`)
                     .attr("fill", color)
-                    .attr("opacity", 0.9);
-            }
+                    .attr("class", "boulder");
+            });
 
             // --- Vegetation (Trees) ---
             const treeGroup = svg.append("g").attr("class", "trees");
             
-            const samples = 16000;
-            
-            for(let k=0; k<samples; k++) {
-                const r = Math.sqrt(Math.random()) * maxR * 1.5;
-                const theta = Math.random() * 2 * Math.PI;
-                const x = r * Math.cos(theta);
-                const y = r * Math.sin(theta);
-                
+            scatter(treeGroup, 16000, 200000, (x, y) => {
                 // Get elevation
                 const h = calculateHeight(x, y);
+
+                // Check lake collision
+                if (h <= lakeLevel + 0.2) return false;
+
                 // Check if suitable for trees (low to mid elevation)
                 // Normalize h
                 const normH = (h - minZ) / zRange;
                 
                 // Trees grow below given elevation
-                if (normH > 0.5) {
-                    if (checkLinkCollision(x, y)) continue;
-                    
-                    // Add some noise to tree placement density
-                    const n = noise.noise2D(x*0.01, y*0.01);
-                    if (n > 0) {
-                        const scale = 0.8 + Math.random() * 0.5;
-                         treeGroup.append("path")
-                            .attr("d", `M0,0 l-5,15 l10,0 z`) 
-                            .attr("transform", `translate(${x},${y}) scale(${scale})`)
-                            .attr("fill", "#19692c") // Darker green
-                            .attr("opacity", 1.0);
-                    }
-                }
-            }
+                if (normH <= 0.5) return false;
+
+                // Add some noise to tree placement density
+                const n = noise.noise2D(x*0.01, y*0.01);
+                return n > 0;
+            }, (container, x, y, rng) => {
+                const scale = 0.8 + rng.next() * 0.5;
+                container.append("path")
+                    .attr("d", `M0,0 l-5,15 l10,0 z`) 
+                    .attr("transform", `translate(${x},${y}) scale(${scale})`)
+                    .attr("class", "tree");
+            });
         },
         initGraph() {
+            // Reset RNG for deterministic regeneration
+            this.rng = new Mulberry32(this.seed);
+
             const width = window.innerWidth;
             const height = window.innerHeight;
 
             // For meandering paths
-            const pathNoise = new SimplexNoise();
+            const pathNoise = new SimplexNoise(() => this.rng.next());
             const tempPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
             const radialGenerator = d3.linkRadial()
                 .angle(d => d.x)
@@ -612,11 +656,10 @@ app.component('graph-background', {
             const svg = d3.select("#background-graph")
                 .html("")
                 .append("svg")
+                .attr("class", "responsive-svg")
                 .attr("width", width)
                 .attr("height", height)
-                .attr("viewBox", [-width/2, -height/2, width, height])
-                .style("max-width", "100%")
-                .style("height", "auto");
+                .attr("viewBox", [-width/2, -height/2, width, height]);
             
             const g = svg.append("g");
             this.g = g;
@@ -651,80 +694,59 @@ app.component('graph-background', {
                      return `M${sr * Math.cos(sa)},${sr * Math.sin(sa)}L${tr * Math.cos(ta)},${tr * Math.sin(ta)}`;
                 });
 
+            // Lift Drawing Helper
+            const drawLiftGroup = (selection, typeClass, spacing, drawMarkerFn) => {
+                const group = selection.join("g")
+                    .attr("class", `${typeClass}-group`);
+                
+                group.append("path")
+                    .attr("class", `link ${typeClass}`)
+                    .attr("id", d => d.id)
+                    .attr("fill", "none")
+                    .attr("d", d => generateMeanderingPath(d));
+                
+                group.each(function(d) {
+                    const pathElement = d3.select(this).select("path").node();
+                    try {
+                        const len = pathElement.getTotalLength();
+                        const numMarkers = Math.floor(len / spacing);
+                        
+                        for(let i=1; i<=numMarkers; i++) {
+                            const pt = pathElement.getPointAtLength(i * spacing);
+                            drawMarkerFn(d3.select(this), pt);
+                        }
+                    } catch(e) {
+                        console.warn(`Could not draw markers for ${typeClass}`, e);
+                    }
+                });
+                return group;
+            };
+
             // 3. CHAIR LIFTS (Dashed + Chairs)
-            const chairGroup = linkGroup.selectAll(".lift-chair-group")
+            linkGroup.selectAll(".lift-chair-group")
                 .data(links.filter(d => d.styleType === 'lift-chair'))
-                .join("g")
-                .attr("class", "lift-chair-group");
-            
-            // The path itself
-            chairGroup.append("path")
-                .attr("class", "link lift-chair")
-                .attr("id", d => d.id) // ID used for labels later
-                .attr("fill", "none")
-                .attr("d", d => generateMeanderingPath(d));
-            
-            // The chairs
-            chairGroup.each(function(d) {
-                 const pathElement = d3.select(this).select("path").node();
-                 // We need to wait for the path to be in DOM or compute manually?
-                 // D3 appends synchronously. However, getPointAtLength usually works.
-                 // If radius is large, length is large.
-                 try {
-                     const len = pathElement.getTotalLength();
-                     const spacing = 40;
-                     const numChairs = Math.floor(len / spacing);
-                     
-                     for(let i=1; i<=numChairs; i++) {
-                         const pt = pathElement.getPointAtLength(i * spacing);
-                         d3.select(this).append("rect")
-                            .attr("x", pt.x - 3)
-                            .attr("y", pt.y - 3)
-                            .attr("width", 6)
-                            .attr("height", 6)
-                            .attr("class", "chair-marker");
-                     }
-                 } catch(e) {
-                     console.warn("Could not draw chairs", e);
-                 }
-            });
+                .call(g => drawLiftGroup(g, "lift-chair", 40, (container, pt) => {
+                    container.append("rect")
+                        .attr("x", pt.x - 3)
+                        .attr("y", pt.y - 3)
+                        .attr("width", 6)
+                        .attr("height", 6)
+                        .attr("class", "chair-marker");
+                }));
 
             // 4. GONDOLA LIFTS (Dashed + Emoji)
-            const gondolaGroup = linkGroup.selectAll(".lift-gondola-group")
+            linkGroup.selectAll(".lift-gondola-group")
                 .data(links.filter(d => d.styleType === 'lift-gondola'))
-                .join("g")
-                .attr("class", "lift-gondola-group");
-            
-            // The path itself
-            gondolaGroup.append("path")
-                .attr("class", "link lift-gondola")
-                .attr("id", d => d.id)
-                .attr("fill", "none")
-                .attr("d", d => generateMeanderingPath(d));
-            
-            // The gondolas
-            gondolaGroup.each(function(d) {
-                 const pathElement = d3.select(this).select("path").node();
-                 try {
-                     const len = pathElement.getTotalLength();
-                     const spacing = 60;
-                     const numGondolas = Math.floor(len / spacing);
-                     
-                     for(let i=1; i<=numGondolas; i++) {
-                         const pt = pathElement.getPointAtLength(i * spacing);
-                         d3.select(this).append("text")
-                            .attr("x", pt.x)
-                            .attr("y", pt.y)
-                            .attr("class", "gondola-marker")
-                            .attr("text-anchor", "middle")
-                            .attr("dominant-baseline", "central")
-                            .attr("font-size", "14px")
-                            .html("&#x1F6A1");
-                     }
-                 } catch(e) {
-                     console.warn("Could not draw gondolas", e);
-                 }
-            });
+                .call(g => drawLiftGroup(g, "lift-gondola", 60, (container, pt) => {
+                    container.append("text")
+                        .attr("x", pt.x)
+                        .attr("y", pt.y)
+                        .attr("class", "gondola-marker")
+                        .attr("text-anchor", "middle")
+                        .attr("dominant-baseline", "central")
+                        .attr("font-size", "14px")
+                        .html("&#x1F6A1");
+                }));
 
             // Combine all links for the 'this.link' selection used in highlighting
             // We need a selection that covers all link paths.
@@ -770,10 +792,8 @@ app.component('graph-background', {
             linkLabels.append("textPath")
                 .attr("href", d => `#${d.id}`)
                 .attr("startOffset", "50%")
-                .style("text-anchor", "middle")
-                .text(d => d.target.data.edgeLabel || "")
-                .style("font-size", "10px")
-                .style("pointer-events", "none");
+                .attr("class", "debug-label")
+                .text(d => d.target.data.edgeLabel || "");
 
             node.append("title")
                 .text(d => d.data.text);
@@ -781,13 +801,10 @@ app.component('graph-background', {
             node.append("text")
                 .attr("dy", "15") // Position below the node
                 .attr("x", 0)
-                .attr("text-anchor", "middle")
                 // Counter-rotate the text so it's always horizontal
                 .attr("transform", d => `rotate(${- (d.x * 180 / Math.PI - 90)})`)
                 .text(d => d.data.name)
-                .style("font-size", "10px")
-                .style("fill", "#666") // Match edge style
-                .style("pointer-events", "none");
+                .attr("class", "debug-label-text");
         },
         updateHighlight() {
             if (!this.root || !this.link || !this.node) return;
@@ -876,9 +893,8 @@ app.component('graph-background', {
                 if (this.svg) {
                     this.svg
                         .attr("width", width)
-                        .attr("height", height);
-                    
-                    this.initGraph();
+                        .attr("height", height)
+                        .attr("viewBox", [-width/2, -height/2, width, height]);
                 }
             }
         }
