@@ -186,7 +186,7 @@ app.component('graph-background', {
                 
                 // Force James node to be a local minimum (lake)
                 if (d.data.name === 'james') {
-                    z -= 1.0;
+                    z -= 2.0;
                 }
 
                 return {
@@ -344,21 +344,29 @@ app.component('graph-background', {
                         // Transparent on rock canvas
                         rockData.data[idx+3] = 0;
                     } else {
-                        // ROCK
+                        // Off piste
                         // High frequency noise for texture
-                        let base = 240;
-                        const textureScale = 100;
+                        let base = 260;
+                        const textureScale = 1;
                         const textureVal = noise.noise2D(wx * textureScale, wy * textureScale);
                         
-                        base = base - (1-quantized) * 40;
+                        base = base - (1-quantized);
                         
                         let r, g, b;
 
-                        // Icy Blue / White aesthetic for rocks
-                        // Boost Blue and Green channels slightly relative to Red for a cool tone
-                        r = base * 0.94; 
-                        g = base * 0.98; 
-                        b = base;
+                        // Icy Blue / White aesthetic for rocks, with brown flecks
+                        if (textureVal > 0.5) {
+                            // Occasional brown/tan fleck (exposed rock/earth)
+                            r = base * 0.94; 
+                            g = base * 0.96; 
+                            b = base;
+                        } else {
+                            // Mostly Icy Blue / White
+                            // Boost Blue and Green channels slightly relative to Red for a cool tone
+                            r = base * 0.8; 
+                            g = base * 0.96; 
+                            b = base;
+                        }
                         
                         rockData.data[idx] = r;
                         rockData.data[idx+1] = g;
@@ -799,11 +807,11 @@ app.component('graph-background', {
                 .text(d => d.data.text);
 
             node.append("text")
-                .attr("dy", "15") // Position below the node
+                .attr("dy", "18") // Position below the node
                 .attr("x", 0)
                 // Counter-rotate the text so it's always horizontal
                 .attr("transform", d => `rotate(${- (d.x * 180 / Math.PI - 90)})`)
-                .text(d => d.data.name)
+                .text(d => d.data.name == "james" ? "Lac du Faff" :  d.data.name)
                 .attr("class", "debug-label-text");
         },
         updateHighlight() {
