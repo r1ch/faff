@@ -1,4 +1,4 @@
-const questions = {
+export default {
     "start": {
         "text": "What's your name?",
         "answers": [
