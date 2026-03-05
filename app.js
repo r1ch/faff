@@ -186,7 +186,7 @@ app.component('graph-background', {
                 
                 // Force James node to be a local minimum (lake)
                 if (d.data.name === 'james') {
-                    z -= 2.0;
+                    z -= 3.0;
                 }
 
                 return {
