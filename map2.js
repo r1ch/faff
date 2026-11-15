@@ -78,12 +78,36 @@ class SimplexNoise {
   const root = d3.hierarchy(build("start", new Set()));
   d3.tree().nodeSize([64, 1]).separation((a, b) => a.parent === b.parent ? 1 : 1.3)(root);
   const nodes = root.descendants();
-  root.each(d => {
-    const j = () => (rng() - 0.5) * 16;
-    d.wx = d.x * 0.6 + (d.parent ? j() : 0);
-    d.wy = !d.parent ? 0 : d.data.q.answers ? d.parent.wy - (120 + rng() * 40) : d.parent.wy + 70 + rng() * 50;
-    d.leaf = !d.data.q.answers;
-  });
+  root.each(d => { d.leaf = !d.data.q.answers; });
+  // try many jittered layouts and keep the one whose lifts and runs cross and crowd each other least
+  const mk = a => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const links = root.links();
+  function place(seed) {
+    const r = mk(seed), sx = 0.65 + r() * 0.6, rise = 115 + r() * 50, drop = 60 + r() * 60, lat = 15 + r() * 50, out = {};
+    root.each(d => {
+      d.wx = d.x * sx + (d.parent ? (r() - 0.5) * 24 : 0);
+      if (d.parent && d.leaf) d.wx += (r() < 0.5 ? -1 : 1) * lat * r();
+      d.wy = !d.parent ? 0 : d.leaf ? d.parent.wy + drop * (0.7 + r() * 0.6) : d.parent.wy - rise * (0.85 + r() * 0.3);
+    });
+  }
+  const ccw = (a, b, c) => (c[1] - a[1]) * (b[0] - a[0]) > (b[1] - a[1]) * (c[0] - a[0]);
+  const cross = (p, q, r, t) => ccw(p, r, t) !== ccw(q, r, t) && ccw(p, q, r) !== ccw(p, q, t);
+  const dseg = (p, a, b) => { const vx = b[0] - a[0], vy = b[1] - a[1], u = clamp(((p[0] - a[0]) * vx + (p[1] - a[1]) * vy) / (vx * vx + vy * vy || 1), 0, 1); return Math.hypot(p[0] - a[0] - u * vx, p[1] - a[1] - u * vy); };
+  function score() {
+    let sc = 0; const seg = links.map(l => [[l.source.wx, l.source.wy], [l.target.wx, l.target.wy], l]);
+    for (let i = 0; i < seg.length; i++) {
+      for (let j = i + 1; j < seg.length; j++) {
+        const A = seg[i], B = seg[j], share = A[2].source === B[2].source || A[2].target === B[2].target || A[2].source === B[2].target || A[2].target === B[2].source;
+        if (!share && cross(A[0], A[1], B[0], B[1])) sc += 12;
+      }
+      for (const d of nodes) if (d !== seg[i][2].source && d !== seg[i][2].target) { const dd = dseg([d.wx, d.wy], seg[i][0], seg[i][1]); if (dd < 34) sc += (34 - dd) / 4; }
+    }
+    let w = 0, h = 0; nodes.forEach(d => { w = Math.max(w, Math.abs(d.wx)); h = Math.max(h, Math.abs(d.wy)); });
+    return sc + (w + h) / 400;                                // slight preference for a compact map
+  }
+  let best = 1e9, bestSeed = 1;
+  for (let sd = 1; sd <= 600; sd++) { place(sd * 7919); const sc = score(); if (sc < best) { best = sc; bestSeed = sd * 7919; } }
+  place(bestSeed);
   const RUN = { danger: "#1c1f24", success: "#1c6fe0", warning: "#e03131" };
   const edges = root.links().map((l, i) => {
     const a = l.source, b = l.target, run = b.leaf;
@@ -155,42 +179,48 @@ class SimplexNoise {
     for (const e of edges) { mc.beginPath(); e.pts.forEach((p, s) => s ? mc.lineTo((p[0] - x0) / CELL, (p[1] - y0) / CELL) : mc.moveTo((p[0] - x0) / CELL, (p[1] - y0) / CELL)); mc.stroke(); }
     const md = mc.getImageData(0, 0, gw, gh).data, mask = new Float32Array(gw * gh); for (let k = 0; k < mask.length; k++) mask[k] = md[k * 4] / 255;
 
-    const img = new ImageData(gw, gh), C = { green: [146, 187, 128], beige: [198, 208, 180], rock: [178, 187, 196], snow: [247, 250, 253], piste: [255, 255, 255] };
-    const tint = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
+    // flat painted look: a few flat colour zones with smooth outlines, three-tone facets, clean white piste lanes
+    const c = bake.getContext("2d"); c.imageSmoothingEnabled = true; c.lineJoin = c.lineCap = "round";
+    const gp = d3.geoPath(d3.geoIdentity().scale(CELL * B), c);
+    const blur = (arr, r, passes) => { let a = arr; for (let p = 0; p < passes; p++) { const t = new Float32Array(a.length), u = new Float32Array(a.length), n = 2 * r + 1;
+      for (let j = 0; j < gh; j++) { let acc = 0; for (let i = -r; i <= r; i++) acc += a[j * gw + clamp(i, 0, gw - 1)]; for (let i = 0; i < gw; i++) { t[j * gw + i] = acc / n; acc += a[j * gw + clamp(i + r + 1, 0, gw - 1)] - a[j * gw + clamp(i - r, 0, gw - 1)]; } }
+      for (let i = 0; i < gw; i++) { let acc = 0; for (let j = -r; j <= r; j++) acc += t[clamp(j, 0, gh - 1) * gw + i]; for (let j = 0; j < gh; j++) { u[j * gw + i] = acc / n; acc += t[clamp(j + r + 1, 0, gh - 1) * gw + i] - t[clamp(j - r, 0, gh - 1) * gw + i]; } }
+      a = u; } return a; };
+    const fill = (field, thr, color, edge) => { const g = d3.contours().size([gw, gh]).thresholds([thr])(field)[0]; c.beginPath(); gp(g); c.fillStyle = color; c.fill(); if (edge) { c.strokeStyle = edge; c.lineWidth = 1.2; c.stroke(); } };
+    const forestF = new Float32Array(gw * gh), rockF = new Float32Array(gw * gh), snowF = new Float32Array(gw * gh), lakeF = new Float32Array(gw * gh);
     for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
-      const k = j * gw + i, x = x0 + i * CELL, y = y0 + j * CELL, n1 = noise.noise2D(x * 0.006, y * 0.006), n2 = noise.noise2D(x * 0.011 + 50, y * 0.011);
-      const a = alt[k], tl = 0.42 + 0.07 * n1, sl = 0.6 + 0.07 * n2;
-      let c = tint(C.green, C.beige, smooth(tl - 0.03, tl + 0.07, a)); c = tint(c, C.rock, smooth(tl + 0.07, sl, a) * 0.8); c = tint(c, C.snow, smooth(sl, sl + 0.1, a));
-      c = tint(c, C.piste, Math.pow(mask[k], 0.8));
-      const sh = mix(clamp(1 + 0.8 * shade[k], 0.84, 1.1), 1, mask[k] * 0.8) + 0.015 * noise.noise2D(x * 0.15, y * 0.15);
-      const lk = lakeV(x, y); if (lk > 0) { const dp = clamp(lk * 1.1, 0, 1), w = lk < 0.07 ? [176, 224, 232] : tint([104, 190, 214], [48, 132, 180], dp); c = w; } else if (lk > -0.06) c = tint(c, [236, 240, 226], 0.7);
-      img.data[k * 4] = clamp(c[0] * sh, 0, 255); img.data[k * 4 + 1] = clamp(c[1] * sh, 0, 255); img.data[k * 4 + 2] = clamp(c[2] * sh * 1.02, 0, 255); img.data[k * 4 + 3] = 255;
+      const k = j * gw + i, x = x0 + i * CELL, y = y0 + j * CELL, a = alt[k], tl = 0.42 + 0.07 * noise.noise2D(x * 0.006, y * 0.006), sl = 0.6 + 0.07 * noise.noise2D(x * 0.011 + 50, y * 0.011);
+      forestF[k] = (tl - a) + 0.12 * noise.noise2D(x * 0.011 + 9, y * 0.011) - 0.1; rockF[k] = a - (tl + 0.04); snowF[k] = a - sl; lakeF[k] = lakeV(x, y);
     }
-    const t = document.createElement("canvas"); t.width = gw; t.height = gh; t.getContext("2d").putImageData(img, 0, 0);
-    const c = bake.getContext("2d"); c.imageSmoothingEnabled = true; c.imageSmoothingQuality = "high"; c.drawImage(t, 0, 0, bake.width, bake.height);
+    const sh = blur(shade, 9, 2), fF = blur(forestF, 2, 1);
+    c.fillStyle = "#c3d9a8"; c.fillRect(0, 0, bake.width, bake.height);          // meadow
+    fill(fF, 0, "#86b47a");                                                         // forest
+    fill(rockF, 0, "#c4ccd6", "rgba(110,125,145,.35)");                            // rock
+    fill(snowF, 0, "#f7fafd", "rgba(150,170,195,.35)");                            // snow
+    fill(sh, -0.05, "rgba(72,96,140,.13)"); fill(sh, -0.13, "rgba(60,82,130,.15)"); fill(sh, 0.07, "rgba(255,255,255,.22)");   // facets
+    // groomed lanes: clean white corridors through everything, soft edge first
+    c.setTransform(B, 0, 0, B, -x0 * B, -y0 * B);
+    for (const [w, col] of [[40, "rgba(246,250,240,.55)"], [26, "#fbfdff"]]) { c.strokeStyle = col; c.lineWidth = w;
+      for (const e of edges) { c.beginPath(); e.pts.forEach((p, s) => s ? c.lineTo(p[0], p[1]) : c.moveTo(p[0], p[1])); c.stroke(); } }
+    c.setTransform(1, 0, 0, 1, 0, 0);
+    // the lake
+    fill(lakeF, -0.06, "#e8f4e6"); fill(lakeF, 0, "#5fbad8", "#f1fafb"); fill(lakeF, 0.3, "#3f9ec8");
 
-    // contour lines
-    const cont = d3.contours().size([gw, gh]).thresholds(d3.range(0.04, 1, 0.045))(alt);
-    c.strokeStyle = "rgba(60,90,120,.09)"; c.lineWidth = 0.7; c.beginPath();
-    d3.geoPath(d3.geoIdentity().scale(CELL * B), c)({ type: "GeometryCollection", geometries: cont });
-    c.stroke();
-
-    // forest and boulders
-    const sample = (x, y) => { const i = clamp(((x - x0) / CELL) | 0, 0, gw - 1), j = clamp(((y - y0) / CELL) | 0, 0, gh - 1); return [alt[j * gw + i], mask[j * gw + i]]; };
-    const greens = ["#5b9a64", "#4c8a57", "#6aa86f", "#3f7a4d"], trees = greens.map(() => new Path2D()), rocks = new Path2D();
+    // trees (clustered triangles in the forest) and a few rocks above it
+    const sample = (x, y) => { const i = clamp(((x - x0) / CELL) | 0, 0, gw - 1), j = clamp(((y - y0) / CELL) | 0, 0, gh - 1); return [fF[j * gw + i], mask[j * gw + i], rockF[j * gw + i]]; };
+    const greens = ["#4f8a5a", "#5d9a63", "#447a50"], trees = greens.map(() => new Path2D()), rocks = new Path2D();
     c.setTransform(B, 0, 0, B, -x0 * B, -y0 * B);
     for (let y = y0; y < y1; y += 7) for (let x = x0; x < x1; x += 7) {
-      const px = x + rng() * 7, py = y + rng() * 7, [a, mk] = sample(px, py);
-      const tl = 0.42 + 0.07 * noise.noise2D(px * 0.006, py * 0.006);
+      const px = x + rng() * 7, py = y + rng() * 7, [f, mk, rf] = sample(px, py);
       if (mk > 0.3 || lakeV(px, py) > -0.1) continue;
-      if (a < tl - 0.02 && noise.noise2D(px * 0.012 + 9, py * 0.012) > -0.2 + a * 0.6) {
-        const s = 4 + rng() * 4, p = trees[rng() * 4 | 0]; p.moveTo(px, py - s * 1.6); p.lineTo(px - s * 0.6, py + s * 0.4); p.lineTo(px + s * 0.6, py + s * 0.4); p.closePath();
-      } else if (a > tl + 0.05 && rng() < 0.12 && lakeV(px, py) < -0.1) {
+      if (f > 0.02 && noise.noise2D(px * 0.02 + 3, py * 0.02) > -0.35) {
+        const s = 4 + rng() * 3.5, p = trees[rng() * 3 | 0]; p.moveTo(px, py - s * 1.7); p.lineTo(px - s * 0.6, py + s * 0.4); p.lineTo(px + s * 0.6, py + s * 0.4); p.closePath();
+      } else if (rf > 0.03 && rng() < 0.1) {
         const s = 1.5 + rng() * 2.5; rocks.moveTo(px, py); rocks.lineTo(px + s, py - s * 0.4); rocks.lineTo(px + s * 0.5, py + s * 0.6); rocks.closePath();
       }
     }
     trees.forEach((p, i) => { c.fillStyle = greens[i]; c.fill(p); });
-    c.fillStyle = "rgba(100,112,128,.4)"; c.fill(rocks);
+    c.fillStyle = "rgba(105,120,140,.35)"; c.fill(rocks);
     c.setTransform(1, 0, 0, 1, 0, 0);
   }
 
