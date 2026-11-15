@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Oh My Faff.</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN" crossorigin="anonymous">
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #3e7cc0; }
+    #map { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+    #panel { position: fixed; z-index: 2; left: 10px; right: 10px; top: 10px; max-height: 44vh; overflow-y: auto; background: rgba(255,255,255,.92); backdrop-filter: blur(6px); border-radius: 14px; padding: 12px 16px; box-shadow: 0 4px 16px rgba(10,30,60,.3); }
+    @media (min-width: 800px) { #panel { left: 16px; right: auto; top: 16px; width: 400px; max-height: calc(100vh - 32px); } }
+    .q { padding: 6px 0; } .q + .q { border-top: 1px solid rgba(0,0,0,.08); } .qt { font-weight: 600; margin-bottom: 4px; }
+  </style>
+</head>
+<body>
+  <canvas id="map"></canvas>
+  <div id="panel"><form id="form" onsubmit="return false"></form></div>
+  <script type="module">
+    import questions from "./js/questions.js";
+    window.questions = questions;
+    const s = document.createElement("script"); s.src = "piste.js?v=" + Date.now(); document.body.appendChild(s);
+  </script>
+</body>
+</html>
