@@ -193,8 +193,8 @@ class SimplexNoise {
   let path = [root], choices = [], anim = null;
   const cur = () => path[path.length - 1];
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  function choose(child) { anim = { edge: child.edge, t0: performance.now(), dur: Math.max(900, child.edge.len * 5) }; choices.push(child.data.answer); path.push(child); ui(); }
-  function back(i) { path.length = i + 1; choices.length = i; anim = null; ui(); }
+  function choose(child) { pan.x = pan.y = 0;  anim = { edge: child.edge, t0: performance.now(), dur: Math.max(900, child.edge.len * 5) }; choices.push(child.data.answer); path.push(child); ui(); }
+  function back(i) { pan.x = pan.y = 0;  path.length = i + 1; choices.length = i; anim = null; ui(); }
   function ui() {
     histEl.innerHTML = choices.map((c, i) => `<div class="history-item" data-i="${i}"><span class="history-label text-muted">${esc(path[i].data.q.text)}</span><b>${esc(c)}</b></div>`).join("");
     histEl.querySelectorAll(".history-item").forEach(el => el.onclick = () => back(+el.dataset.i));
@@ -211,8 +211,10 @@ class SimplexNoise {
   // ---- drawing -------------------------------------------------------------------------------------------
   const canvas = document.getElementById("map"), ctx = canvas.getContext("2d");
   let vw, vh, dpr, z; const cam = { x: 0, y: 0 }; let camSet = false;
+  let zoomMul = 1; const pan = { x: 0, y: 0 };
+  const setZ = () => { z = clamp(vw / 560, 0.62, 1.35) * zoomMul; };
   function resize() {
-    vw = innerWidth; vh = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2); z = clamp(vw / 560, 0.62, 1.35);
+    vw = innerWidth; vh = innerHeight; dpr = Math.min(devicePixelRatio || 1, 2); setZ();
     canvas.width = vw * dpr; canvas.height = vh * dpr;
   }
   addEventListener("resize", resize);
@@ -221,49 +223,42 @@ class SimplexNoise {
     ctx.font = labelFont(); ctx.textAlign = align || "left"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
     ctx.lineWidth = 4 / z; ctx.strokeStyle = "rgba(255,255,255,.92)"; ctx.strokeText(text, x, y); ctx.fillStyle = "#1c2430"; ctx.fillText(text, x, y);
   }
+  function drawEdge(n, now, f, taken) {
+    const e = n.edge;
+    ctx.globalAlpha = taken ? 1 : 0.8;
+    trace(ctx, e.pts, f); ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = (e.run ? 9 : 6) / 1; ctx.stroke();
+    trace(ctx, e.pts, f); ctx.strokeStyle = e.color; ctx.lineWidth = e.run ? 5.5 : 2.2; ctx.setLineDash(e.run ? [] : e.kind === 0 ? [] : [7, 5]); ctx.stroke(); ctx.setLineDash([]);
+    if (!e.run) {                                          // pylons and cabins
+      ctx.fillStyle = "#2b2f36";
+      for (let d = 30; d < e.len * f; d += 30) { const [px, py] = pointAt(e, d / e.len); ctx.fillRect(px - 1.8, py - 1.8, 3.6, 3.6); }
+      const sp = e.kind === 1 ? 60 : 85;
+      for (let d = (now / 1000 * 22) % sp; d < e.len * f; d += sp) { const [px, py] = pointAt(e, d / e.len); ctx.beginPath(); ctx.arc(px, py, e.kind === 1 ? 4.2 : 3, 0, 6.283); ctx.fillStyle = e.kind === 1 ? "#e8590c" : "#495057"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke(); }
+    }
+    ctx.globalAlpha = 1;
+    if (f > 0.5) { const [mx, my] = pointAt(e, 0.5); halo(n.data.answer.length > 26 ? n.data.answer.slice(0, 25) + "…" : n.data.answer, mx + 10 / z, my); }
+  }
   function drawRoute(now, prog) {
-    const route = path.slice(1), last = route.length - 1;
     ctx.lineCap = ctx.lineJoin = "round";
-    route.forEach((n, i) => {
-      const e = n.edge, f = i === last && anim ? prog : 1;
-      trace(ctx, e.pts, f); ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = (e.run ? 9 : 6) / 1; ctx.stroke();
-      trace(ctx, e.pts, f); ctx.strokeStyle = e.color; ctx.lineWidth = e.run ? 5.5 : 2.2; ctx.setLineDash(e.run ? [] : e.kind === 0 ? [] : [7, 5]); ctx.stroke(); ctx.setLineDash([]);
-      if (!e.run) {                                          // pylons and cabins
-        ctx.fillStyle = "#2b2f36";
-        for (let d = 30; d < e.len * f; d += 30) { const [px, py] = pointAt(e, d / e.len); ctx.fillRect(px - 1.8, py - 1.8, 3.6, 3.6); }
-        const sp = e.kind === 1 ? 60 : 85;
-        for (let d = (now / 1000 * 22) % sp; d < e.len * f; d += sp) { const [px, py] = pointAt(e, d / e.len); ctx.beginPath(); ctx.arc(px, py, e.kind === 1 ? 4.2 : 3, 0, 6.283); ctx.fillStyle = e.kind === 1 ? "#e8590c" : "#495057"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke(); }
-      }
-      if (f > 0.5) { const [mx, my] = pointAt(e, 0.5); halo(n.data.answer.length > 26 ? n.data.answer.slice(0, 25) + "…" : n.data.answer, mx + 10 / z, my); }
-    });
+    const taken = new Set(path.slice(1)), last = path.length - 1;
+    nodes.forEach(n => { if (n.edge && !taken.has(n)) drawEdge(n, now, 1, false); });   // the whole map
+    path.slice(1).forEach((n, i) => drawEdge(n, now, i + 1 === last && anim ? prog : 1, true));
     // stations
-    path.forEach((n, i) => { if (i === path.length - 1 && anim && prog < 1) return; ctx.fillStyle = "#fff"; ctx.strokeStyle = "#2b2f36"; ctx.lineWidth = 2; ctx.beginPath(); ctx.rect(n.wx - 5, n.wy - 5, 10, 10); ctx.fill(); ctx.stroke(); });
+    nodes.forEach(n => { if (n === cur() && anim) return; const on = path.includes(n); ctx.fillStyle = "#fff"; ctx.strokeStyle = on ? "#2b2f36" : "rgba(43,47,54,.55)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.rect(n.wx - 4, n.wy - 4, 8, 8); ctx.fill(); ctx.stroke(); });
   }
   function frame(now) {
+    setZ();
     const n = cur(), prog = anim ? clamp((now - anim.t0) / anim.dur, 0, 1) : 1, e = anim ? anim.edge : null;
     if (anim && prog >= 1) anim = null;
     // the camera follows the skier, keeping the action in the lower half so the card has the sky
-    const head = e && prog < 1 ? pointAt(e, prog) : [n.wx, n.wy], ty = head[1] - 0.2 * vh / z;
-    if (!camSet) { cam.x = head[0]; cam.y = ty; camSet = true; } else { const a = 1 - Math.exp(-16 / 260); cam.x += (head[0] - cam.x) * a; cam.y += (ty - cam.y) * a; }
+    const head = e && prog < 1 ? pointAt(e, prog) : [n.wx, n.wy], ty = head[1] - 0.2 * vh / z - pan.y; const hx = head[0] - pan.x;
+    if (!camSet) { cam.x = hx; cam.y = ty; camSet = true; } else { const a = 1 - Math.exp(-16 / 260); cam.x += (hx - cam.x) * a; cam.y += (ty - cam.y) * a; }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.fillStyle = "#e9eff5"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     const s = z * dpr; ctx.setTransform(s, 0, 0, s, canvas.width / 2 - cam.x * s, canvas.height / 2 - cam.y * s);
     ctx.imageSmoothingEnabled = true; ctx.drawImage(bake, x0, y0, WW, WH);
 
-    // the choices ahead: faint stubs fading into the fog, nothing to say what they are
-    if (!e) for (const k of n.children || []) {
-      const ed = k.edge, f = 0.62, [ex, ey] = pointAt(ed, f), g = ctx.createLinearGradient(n.wx, n.wy, ex, ey);
-      g.addColorStop(0, "rgba(40,60,90,.55)"); g.addColorStop(1, "rgba(40,60,90,0)");
-      ctx.strokeStyle = g; ctx.lineWidth = 2.4; ctx.setLineDash([6, 6]); ctx.lineCap = "round"; ctx.beginPath(); ctx.moveTo(n.wx, n.wy); ctx.lineTo(ex, ey); ctx.stroke(); ctx.setLineDash([]);
-    }
-
-    // fog of war: clear around you, cloud beyond
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    const fx = (head[0] - cam.x) * s + canvas.width / 2, fy = (head[1] - cam.y) * s + canvas.height / 2, r = 270 * s;
-    const fog = ctx.createRadialGradient(fx, fy, r * 0.45, fx, fy, r * 1.35);
-    fog.addColorStop(0, "rgba(233,239,245,0)"); fog.addColorStop(0.55, "rgba(233,239,245,.8)"); fog.addColorStop(1, "rgba(233,239,245,1)");
-    ctx.fillStyle = fog; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.45); sky.addColorStop(0, "rgba(233,239,245,.85)"); sky.addColorStop(1, "rgba(233,239,245,0)");
+    const sky = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.45); sky.addColorStop(0, "rgba(233,239,245,.4)"); sky.addColorStop(1, "rgba(233,239,245,0)");
     ctx.fillStyle = sky; ctx.fillRect(0, 0, canvas.width, canvas.height);
 
     ctx.setTransform(s, 0, 0, s, canvas.width / 2 - cam.x * s, canvas.height / 2 - cam.y * s);
@@ -279,8 +274,22 @@ class SimplexNoise {
     requestAnimationFrame(frame);
   }
 
+  // drag to look around, wheel / pinch to zoom; choosing an answer re-centres on you
+  const ptrs = new Map(); let pinch = 0;
+  canvas.style.touchAction = "none";
+  canvas.addEventListener("pointerdown", e => { canvas.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, [e.clientX, e.clientY]); });
+  canvas.addEventListener("pointerup", e => { ptrs.delete(e.pointerId); pinch = 0; });
+  canvas.addEventListener("pointercancel", e => { ptrs.delete(e.pointerId); pinch = 0; });
+  canvas.addEventListener("pointermove", e => {
+    const p = ptrs.get(e.pointerId); if (!p) return;
+    if (ptrs.size === 1) { pan.x -= (e.clientX - p[0]) / z; pan.y -= (e.clientY - p[1]) / z; }
+    ptrs.set(e.pointerId, [e.clientX, e.clientY]);
+    if (ptrs.size === 2) { const [a, b] = [...ptrs.values()], d = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) zoomMul = clamp(zoomMul * d / pinch, 0.25, 2.5); pinch = d; }
+  });
+  canvas.addEventListener("wheel", e => { e.preventDefault(); zoomMul = clamp(zoomMul * Math.exp(-e.deltaY / 500), 0.25, 2.5); }, { passive: false });
+
   resize(); ui();
   makeTerrain();
   requestAnimationFrame(frame);
-  window.faffMap = { nodes: nodes.length, edges: edges.length, world: [WW | 0, WH | 0], choose, back, path };
+  window.faffMap = { zoom: v => { zoomMul = v; }, nodes: nodes.length, edges: edges.length, world: [WW | 0, WH | 0], choose, back, path };
 })();
