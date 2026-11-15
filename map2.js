@@ -126,6 +126,11 @@ class SimplexNoise {
   const WW = x1 - x0, WH = y1 - y0, B = Math.min(1.5, Math.sqrt(5.5e6 / (WW * WH)));
   const bake = document.createElement("canvas"); bake.width = Math.round(WW * B); bake.height = Math.round(WH * B);
 
+  // Lac du Faff: the "James Dracup" answer ends in a lake
+  const lakeNode = nodes.find(d => d.data.key === "james");
+  const LR = 95, lakeC = lakeNode ? [lakeNode.wx, lakeNode.wy + 30] : [0, 1e9];
+  const lakeV = (x, y) => 1 - Math.hypot((x - lakeC[0]) / 1.35, y - lakeC[1]) / LR + 0.2 * noise.noise2D(x * 0.025 + 7, y * 0.025);
+
   function makeTerrain() {
     const gw = Math.ceil(WW / CELL), gh = Math.ceil(WH / CELL), alt = new Float32Array(gw * gh), shade = new Float32Array(gw * gh);
     const SOFT = 160 * 160, fbm = (x, y) => { let s = 0, a = 1, f = 0.0035; for (let o = 0; o < 5; o++) { s += a * (1 - Math.abs(noise.noise2D(x * f, y * f))); a *= 0.5; f *= 2; } return s / 1.9 - 0.5; };
@@ -150,14 +155,15 @@ class SimplexNoise {
     for (const e of edges) { mc.beginPath(); e.pts.forEach((p, s) => s ? mc.lineTo((p[0] - x0) / CELL, (p[1] - y0) / CELL) : mc.moveTo((p[0] - x0) / CELL, (p[1] - y0) / CELL)); mc.stroke(); }
     const md = mc.getImageData(0, 0, gw, gh).data, mask = new Float32Array(gw * gh); for (let k = 0; k < mask.length; k++) mask[k] = md[k * 4] / 255;
 
-    const img = new ImageData(gw, gh), C = { green: [118, 160, 114], beige: [190, 184, 160], rock: [160, 156, 150], snow: [240, 245, 251], piste: [250, 252, 255] };
+    const img = new ImageData(gw, gh), C = { green: [146, 187, 128], beige: [198, 208, 180], rock: [178, 187, 196], snow: [247, 250, 253], piste: [255, 255, 255] };
     const tint = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t), mix(a[2], b[2], t)];
     for (let j = 0; j < gh; j++) for (let i = 0; i < gw; i++) {
       const k = j * gw + i, x = x0 + i * CELL, y = y0 + j * CELL, n1 = noise.noise2D(x * 0.006, y * 0.006), n2 = noise.noise2D(x * 0.011 + 50, y * 0.011);
       const a = alt[k], tl = 0.42 + 0.07 * n1, sl = 0.6 + 0.07 * n2;
       let c = tint(C.green, C.beige, smooth(tl - 0.03, tl + 0.07, a)); c = tint(c, C.rock, smooth(tl + 0.07, sl, a) * 0.8); c = tint(c, C.snow, smooth(sl, sl + 0.1, a));
       c = tint(c, C.piste, Math.pow(mask[k], 0.8));
-      const sh = mix(clamp(1 + 1.1 * shade[k], 0.72, 1.18), 1, mask[k] * 0.7) + 0.03 * noise.noise2D(x * 0.15, y * 0.15);
+      const sh = mix(clamp(1 + 0.8 * shade[k], 0.84, 1.1), 1, mask[k] * 0.8) + 0.015 * noise.noise2D(x * 0.15, y * 0.15);
+      const lk = lakeV(x, y); if (lk > 0) { const dp = clamp(lk * 1.1, 0, 1), w = lk < 0.07 ? [176, 224, 232] : tint([104, 190, 214], [48, 132, 180], dp); c = w; } else if (lk > -0.06) c = tint(c, [236, 240, 226], 0.7);
       img.data[k * 4] = clamp(c[0] * sh, 0, 255); img.data[k * 4 + 1] = clamp(c[1] * sh, 0, 255); img.data[k * 4 + 2] = clamp(c[2] * sh * 1.02, 0, 255); img.data[k * 4 + 3] = 255;
     }
     const t = document.createElement("canvas"); t.width = gw; t.height = gh; t.getContext("2d").putImageData(img, 0, 0);
@@ -165,26 +171,26 @@ class SimplexNoise {
 
     // contour lines
     const cont = d3.contours().size([gw, gh]).thresholds(d3.range(0.04, 1, 0.045))(alt);
-    c.strokeStyle = "rgba(50,80,110,.22)"; c.lineWidth = 0.8; c.beginPath();
+    c.strokeStyle = "rgba(60,90,120,.09)"; c.lineWidth = 0.7; c.beginPath();
     d3.geoPath(d3.geoIdentity().scale(CELL * B), c)({ type: "GeometryCollection", geometries: cont });
     c.stroke();
 
     // forest and boulders
     const sample = (x, y) => { const i = clamp(((x - x0) / CELL) | 0, 0, gw - 1), j = clamp(((y - y0) / CELL) | 0, 0, gh - 1); return [alt[j * gw + i], mask[j * gw + i]]; };
-    const greens = ["#3d7646", "#33663d", "#4a8650", "#2c5c38"], trees = greens.map(() => new Path2D()), rocks = new Path2D();
+    const greens = ["#5b9a64", "#4c8a57", "#6aa86f", "#3f7a4d"], trees = greens.map(() => new Path2D()), rocks = new Path2D();
     c.setTransform(B, 0, 0, B, -x0 * B, -y0 * B);
     for (let y = y0; y < y1; y += 7) for (let x = x0; x < x1; x += 7) {
       const px = x + rng() * 7, py = y + rng() * 7, [a, mk] = sample(px, py);
       const tl = 0.42 + 0.07 * noise.noise2D(px * 0.006, py * 0.006);
-      if (mk > 0.3) continue;
+      if (mk > 0.3 || lakeV(px, py) > -0.1) continue;
       if (a < tl - 0.02 && noise.noise2D(px * 0.012 + 9, py * 0.012) > -0.2 + a * 0.6) {
         const s = 4 + rng() * 4, p = trees[rng() * 4 | 0]; p.moveTo(px, py - s * 1.6); p.lineTo(px - s * 0.6, py + s * 0.4); p.lineTo(px + s * 0.6, py + s * 0.4); p.closePath();
-      } else if (a > tl + 0.05 && rng() < 0.12) {
+      } else if (a > tl + 0.05 && rng() < 0.12 && lakeV(px, py) < -0.1) {
         const s = 1.5 + rng() * 2.5; rocks.moveTo(px, py); rocks.lineTo(px + s, py - s * 0.4); rocks.lineTo(px + s * 0.5, py + s * 0.6); rocks.closePath();
       }
     }
     trees.forEach((p, i) => { c.fillStyle = greens[i]; c.fill(p); });
-    c.fillStyle = "rgba(70,65,60,.55)"; c.fill(rocks);
+    c.fillStyle = "rgba(100,112,128,.4)"; c.fill(rocks);
     c.setTransform(1, 0, 0, 1, 0, 0);
   }
 
@@ -193,8 +199,8 @@ class SimplexNoise {
   let path = [root], choices = [], anim = null;
   const cur = () => path[path.length - 1];
   const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-  function choose(child) { pan.x = pan.y = 0;  anim = { edge: child.edge, t0: performance.now(), dur: Math.max(900, child.edge.len * 5) }; choices.push(child.data.answer); path.push(child); ui(); }
-  function back(i) { pan.x = pan.y = 0;  path.length = i + 1; choices.length = i; anim = null; ui(); }
+  function choose(child) { pan.x = pan.y = 0; zoomMul = 1; if (window.__fitOff) window.__fitOff();  anim = { edge: child.edge, t0: performance.now(), dur: Math.max(900, child.edge.len * 5) }; choices.push(child.data.answer); path.push(child); ui(); }
+  function back(i) { pan.x = pan.y = 0; zoomMul = 1; if (window.__fitOff) window.__fitOff();  path.length = i + 1; choices.length = i; anim = null; ui(); }
   function ui() {
     histEl.innerHTML = choices.map((c, i) => `<div class="history-item" data-i="${i}"><span class="history-label text-muted">${esc(path[i].data.q.text)}</span><b>${esc(c)}</b></div>`).join("");
     histEl.querySelectorAll(".history-item").forEach(el => el.onclick = () => back(+el.dataset.i));
@@ -223,27 +229,36 @@ class SimplexNoise {
     ctx.font = labelFont(); ctx.textAlign = align || "left"; ctx.textBaseline = "middle"; ctx.lineJoin = "round";
     ctx.lineWidth = 4 / z; ctx.strokeStyle = "rgba(255,255,255,.92)"; ctx.strokeText(text, x, y); ctx.fillStyle = "#1c2430"; ctx.fillText(text, x, y);
   }
-  function drawEdge(n, now, f, taken) {
+  function sign(text, x, y, col) {                       // piste-map style tag
+    const fs = Math.round(11.5 / z); ctx.font = `700 ${fs}px system-ui, sans-serif`; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    const w = ctx.measureText(text).width + 10 / z, h = fs + 6 / z, r = h / 2;
+    ctx.beginPath(); ctx.roundRect(x, y - h / 2, w, h, r); ctx.fillStyle = col; ctx.fill(); ctx.lineWidth = 1.5 / z; ctx.strokeStyle = "#fff"; ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.fillText(text, x + 5 / z, y + 0.5 / z);
+  }
+  function drawEdge(n, now, f, taken, label) {
     const e = n.edge;
-    ctx.globalAlpha = taken ? 1 : 0.8;
-    trace(ctx, e.pts, f); ctx.strokeStyle = "rgba(255,255,255,.95)"; ctx.lineWidth = (e.run ? 9 : 6) / 1; ctx.stroke();
-    trace(ctx, e.pts, f); ctx.strokeStyle = e.color; ctx.lineWidth = e.run ? 5.5 : 2.2; ctx.setLineDash(e.run ? [] : e.kind === 0 ? [] : [7, 5]); ctx.stroke(); ctx.setLineDash([]);
+    ctx.globalAlpha = taken ? 1 : 0.9;
+    trace(ctx, e.pts, f); ctx.strokeStyle = "rgba(255,255,255,.96)"; ctx.lineWidth = e.run ? 11 : 4.5; ctx.stroke();
+    trace(ctx, e.pts, f); ctx.strokeStyle = e.color; ctx.lineWidth = e.run ? 6.5 : 1.7; ctx.stroke();
     if (!e.run) {                                          // pylons and cabins
       ctx.fillStyle = "#2b2f36";
-      for (let d = 30; d < e.len * f; d += 30) { const [px, py] = pointAt(e, d / e.len); ctx.fillRect(px - 1.8, py - 1.8, 3.6, 3.6); }
-      const sp = e.kind === 1 ? 60 : 85;
-      for (let d = (now / 1000 * 22) % sp; d < e.len * f; d += sp) { const [px, py] = pointAt(e, d / e.len); ctx.beginPath(); ctx.arc(px, py, e.kind === 1 ? 4.2 : 3, 0, 6.283); ctx.fillStyle = e.kind === 1 ? "#e8590c" : "#495057"; ctx.fill(); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1.2; ctx.stroke(); }
+      for (let d = 34; d < e.len * f; d += 34) { const [px, py] = pointAt(e, d / e.len); ctx.fillRect(px - 1.6, py - 1.6, 3.2, 3.2); }
+      const sp = e.kind === 1 ? 70 : 100;
+      for (let d = (now / 1000 * 22) % sp; d < e.len * f; d += sp) { const [px, py] = pointAt(e, d / e.len); ctx.fillStyle = e.kind === 1 ? "#d9480f" : "#343a40"; ctx.fillRect(px - 3, py - 2.2, 6, 4.4); ctx.strokeStyle = "#fff"; ctx.lineWidth = 1; ctx.strokeRect(px - 3, py - 2.2, 6, 4.4); }
     }
     ctx.globalAlpha = 1;
-    if (f > 0.5) { const [mx, my] = pointAt(e, 0.5); halo(n.data.answer.length > 26 ? n.data.answer.slice(0, 25) + "…" : n.data.answer, mx + 10 / z, my); }
+    if (label && f > 0.5) { const [mx, my] = pointAt(e, 0.5), t = n.data.answer.length > 26 ? n.data.answer.slice(0, 25) + "…" : n.data.answer; e.run ? sign(t, mx + 9 / z, my, e.color) : sign(t, mx + 7 / z, my, "#4b5563"); }
   }
   function drawRoute(now, prog) {
     ctx.lineCap = ctx.lineJoin = "round";
-    const taken = new Set(path.slice(1)), last = path.length - 1;
-    nodes.forEach(n => { if (n.edge && !taken.has(n)) drawEdge(n, now, 1, false); });   // the whole map
-    path.slice(1).forEach((n, i) => drawEdge(n, now, i + 1 === last && anim ? prog : 1, true));
+    const taken = new Set(path.slice(1)), last = path.length - 1, ahead = new Set(cur().children || []);
+    nodes.forEach(n => { if (n.edge && !taken.has(n)) drawEdge(n, now, 1, false, false); });   // the whole map
+    path.slice(1).forEach((n, i) => drawEdge(n, now, i + 1 === last && anim ? prog : 1, true, false));
+    nodes.forEach(n => { if (n.edge && (ahead.has(n) && !anim)) drawEdge(n, now, 1, false, true); });   // labels for the choices
+    path.slice(1).forEach((n, i) => { const e = n.edge; if ((i + 1 === last && anim ? prog : 1) > 0.5) { const [mx, my] = pointAt(e, 0.5), t = n.data.answer.length > 26 ? n.data.answer.slice(0, 25) + "…" : n.data.answer; e.run ? sign(t, mx + 9 / z, my, e.color) : sign(t, mx + 7 / z, my, "#4b5563"); } });
     // stations
-    nodes.forEach(n => { if (n === cur() && anim) return; const on = path.includes(n); ctx.fillStyle = "#fff"; ctx.strokeStyle = on ? "#2b2f36" : "rgba(43,47,54,.55)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.rect(n.wx - 4, n.wy - 4, 8, 8); ctx.fill(); ctx.stroke(); });
+    nodes.forEach(n => { if (n === cur() && anim) return; const on = path.includes(n); ctx.fillStyle = "#fff"; ctx.strokeStyle = on ? "#2b2f36" : "rgba(43,47,54,.6)"; ctx.lineWidth = 1.8; ctx.beginPath(); ctx.arc(n.wx, n.wy, 4, 0, 6.283); ctx.fill(); ctx.stroke(); });
+    if (lakeNode) { ctx.font = `italic 700 ${Math.round(14 / z)}px Georgia, serif`; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.lineWidth = 3 / z; ctx.strokeStyle = "rgba(20,70,110,.55)"; ctx.strokeText("Lac du Faff", lakeC[0], lakeC[1] + 38); ctx.fillStyle = "#f4fbff"; ctx.fillText("Lac du Faff", lakeC[0], lakeC[1] + 38); }
   }
   function frame(now) {
     setZ();
@@ -288,6 +303,12 @@ class SimplexNoise {
   });
   canvas.addEventListener("wheel", e => { e.preventDefault(); zoomMul = clamp(zoomMul * Math.exp(-e.deltaY / 500), 0.25, 2.5); }, { passive: false });
 
+  const fit = document.createElement("button"); fit.textContent = "whole map"; fit.className = "btn btn-light btn-sm shadow";
+  fit.style.cssText = "position:fixed;right:12px;bottom:12px;z-index:5;opacity:.92";
+  let fitted = false;
+  fit.onclick = () => { fitted = !fitted; fit.textContent = fitted ? "back to me" : "whole map"; pan.x = pan.y = 0; if (fitted) { const mw = x1 - x0 - 2 * PAD + 160, mh = y1 - y0 - 2 * PAD + 200; zoomMul = clamp(Math.min(vw / mw, vh / mh) / clamp(vw / 560, 0.62, 1.35), 0.1, 2.5); const zz = clamp(vw / 560, 0.62, 1.35) * zoomMul; pan.x = cur().wx - (x0 + x1) / 2; pan.y = cur().wy - 0.2 * vh / zz - (y0 + y1) / 2; } else zoomMul = 1; };
+  window.__fitOff = () => { fitted = false; fit.textContent = "whole map"; };
+  document.body.appendChild(fit);
   resize(); ui();
   makeTerrain();
   requestAnimationFrame(frame);
